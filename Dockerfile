@@ -21,4 +21,22 @@ RUN rm flair_2_toy_dataset.zip
 # Delete the original .zip file
 
 USER jovyan
+
+# Install PyTorch with pip (https://pytorch.org/get-started/locally/)
+# hadolint ignore=DL3013
+RUN pip install --no-cache-dir --index-url 'https://download.pytorch.org/whl/cpu' \
+    'torch' \
+    'torchvision' \
+    'torchaudio'  && \
+    fix-permissions "${CONDA_DIR}" && \
+    fix-permissions "/home/${NB_USER}"
+
+COPY requirements.txt ./
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+
 WORKDIR /app
+
+EXPOSE 8888
