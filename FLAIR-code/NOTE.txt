@@ -1,0 +1,2 @@
+Code in this directory and subdirectories was developed from:
+https://github.com/IGNF/FLAIR-2/tree/main
