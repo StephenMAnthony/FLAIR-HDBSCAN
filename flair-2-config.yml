@@ -19,6 +19,9 @@ out_model_name: "flair-2-baseline"
 sat_patch_size: 40 # in [8,112] and multiple of 8 
 w_unet_utae: [1,1]
 drop_utae_modality: 0.0 # 1 = dropping U-TAE branch
+sat_aerial_ratio: 50
+aerial_side: 512
+downsample_factor: 10
 
 # MTD and AUG
 aerial_metadata: True

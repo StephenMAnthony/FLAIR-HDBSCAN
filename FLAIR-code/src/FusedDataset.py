@@ -100,7 +100,7 @@ class FusedDataset(Dataset):
         else:
             mtd = []
 
-        # labels (+ resized to satellite resolution if asked)
+        # labels
         labels_file = self.list_labels[index]
         labels = self.read_labels(raster_file=labels_file)
 
