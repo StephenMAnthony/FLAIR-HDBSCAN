@@ -68,7 +68,8 @@ def extract_spectra(train_dataset, config, downsample=True, no_other=True):
     return aerial_spectra, labels
 
 
-def train_and_validate_knn(train_dataset, config, normalize=False, append_intensity=True):
+def train_and_validate_knn(train_dataset, config, normalize=False, append_intensity=True) -> dict:
+
     # Extract the downsampled data
     aerial_spectra, labels = extract_spectra(train_dataset, config, downsample=True)
 
@@ -88,15 +89,18 @@ def train_and_validate_knn(train_dataset, config, normalize=False, append_intens
     # Predict the full data
     predicted = neigh.predict(aerial_spectra.T)
 
-    # Generate a confusion matrix for the knn prediction on the training and validation data
-    knn_confusion = metrics.confusion_matrix(labels, predicted)
-    row_norm_factors = np.sum(knn_confusion, axis=1)[:, np.newaxis]
-    knn_confusion = knn_confusion / row_norm_factors
+    model_and_predictions = {
+        "model": neigh,
+        "true_classes": labels,
+        "predicted_classes": predicted,
+    }
 
-    return neigh, knn_confusion
+    return model_and_predictions
 
 
-def train_and_validate_hdbscan(train_dataset, config, normalize=False, append_intensity=True, min_cluster_size=10):
+def train_and_validate_hdbscan(train_dataset, config, normalize=False,
+                               append_intensity=True, min_cluster_size=10) -> dict:
+
     # Extract the downsampled data
     aerial_spectra, actual_labels = extract_spectra(train_dataset, config, downsample=True)
 
@@ -116,7 +120,7 @@ def train_and_validate_hdbscan(train_dataset, config, normalize=False, append_in
     mean_reliability = np.mean(output_dict['reliability'])
     weighted_mean_reliability = utilities.calc_weighted_mean(output_dict['reliability'],
                                                              output_dict['counts_per_cluster'])
-    print(f"Originally there were {n_pixels} pixels.")
+    print(f"Originally processing {n_pixels} pixels.")
     print(f"HDBSCAN found {n_clusters} clusters.")
     print(f"Clusters were assigned to semantic classes with a mean reliability of {mean_reliability}, ")
     print(f" and a weighted mean reliability of {weighted_mean_reliability}")
@@ -136,12 +140,13 @@ def train_and_validate_hdbscan(train_dataset, config, normalize=False, append_in
     # Predict the full data
     predicted = neigh.predict(aerial_spectra.T)
 
-    # Generate a confusion matrix for the knn prediction on the training and validation data
-    knn_confusion = metrics.confusion_matrix(actual_labels, predicted)
-    row_norm_factors = np.sum(knn_confusion, axis=1)[:, np.newaxis]
-    confusion = knn_confusion / row_norm_factors
+    model_and_predictions = {
+        "model": neigh,
+        "true_classes": actual_labels,
+        "predicted_classes": predicted,
+    }
 
-    return neigh, confusion
+    return model_and_predictions
 
 # output_dict = assign_class_to_cluster(cluster_labels, class_labels, spectra)
 

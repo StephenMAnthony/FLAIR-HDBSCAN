@@ -2,7 +2,8 @@ import numpy as np
 import torch
 from sklearn import metrics
 
-def naive_clustering(the_dataset, config: dict):
+
+def naive_clustering(the_dataset, config: dict) -> dict:
     # Don't include the "other" class
     n_classes = config['num_classes'] - 1
 
@@ -22,14 +23,10 @@ def naive_clustering(the_dataset, config: dict):
     # Generate random labels with a distribution matching that of the original data
     permuted_classes = rng.permutation(all_labels)
 
-    # Generate a confusion matrix for the random classes
-    random_confusion = metrics.confusion_matrix(all_labels, random_classes)
-    row_norm_factors = np.sum(random_confusion, axis=1)[:, np.newaxis]
-    random_confusion = random_confusion / row_norm_factors
+    predictions_dict = {
+        "true_classes": all_labels,
+        "random_classes": random_classes,
+        "permuted_classes": permuted_classes,
+    }
 
-    # Generate a confusion matrix for the permuted classes
-    permuted_confusion = metrics.confusion_matrix(all_labels, permuted_classes)
-    row_norm_factors = np.sum(permuted_confusion, axis=1)[:, np.newaxis]
-    permuted_confusion = permuted_confusion / row_norm_factors
-
-    return random_confusion, permuted_confusion
+    return predictions_dict
