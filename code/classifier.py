@@ -10,6 +10,28 @@ from scipy.sparse import coo_array
 import utilities
 
 
+# data_dict = separate_labels_from_data(data_and_labels)
+
+def separate_labels_from_data(data_and_labels: pandas.DataFrame):
+
+    # Determine all column names and from that data column names.
+    column_names = data_and_labels.columns.values.tolist()
+    data_column_names = column_names.copy()
+    data_column_names.remove('True_Class')
+
+    # Separate the data from the labels
+    true_classes = data_and_labels[['True_Class']].to_numpy().ravel()
+    data = data_and_labels[data_column_names].to_numpy()
+
+    data_dict = {
+        "true_classes": true_classes,
+        "data": data,
+        "data_column_names": data_column_names,
+    }
+
+    return data_dict
+
+
 def normalize_aerial_spectra(spectra, append_intensity=True):
     intensity = np.sum(spectra, axis=0)
     normalized_spectra = np.divide(spectra, intensity)
@@ -18,6 +40,8 @@ def normalize_aerial_spectra(spectra, append_intensity=True):
 
     return normalized_spectra
 
+
+# aerial_data = def extract_aerial_spectra(train_dataset, config, downsample=True, no_other=True)
 
 def extract_aerial_spectra(train_dataset, config, downsample=True, no_other=True):
     num_channels_aerial = config['num_channels_aerial']
@@ -67,37 +91,39 @@ def extract_aerial_spectra(train_dataset, config, downsample=True, no_other=True
     labels = np.concatenate(label_list)
     labels = labels.astype(int)
 
-    combined = np.concatenate((labels[np.newaxis,:], aerial_spectra), axis=0)
+    combined = np.concatenate((labels[np.newaxis, :], aerial_spectra), axis=0)
 
     aerial_data = pandas.DataFrame(combined.T, columns=['True_Class', 'Blue', 'Green', 'Red', 'NIR', 'Elevation'])
 
     return aerial_data
 
 
-def train_and_validate_knn(train_dataset, config, normalize=False, append_intensity=True) -> dict:
+def train_and_validate_model(train_dataset, config, normalize=False, append_intensity=True) -> dict:
 
-    # Extract the downsampled data
-    aerial_spectra, labels = extract_spectra(train_dataset, config, downsample=True)
+    # Extract the downsampled data as a pandas dataframe, then separate into data and labels
+    data = extract_aerial_spectra(train_dataset, config)
+    data_dict = separate_labels_from_data(data)
 
     if normalize:
-        aerial_spectra = normalize_aerial_spectra(aerial_spectra, append_intensity=append_intensity)
+        data_dict = normalize_aerial_spectra(data_dict, append_intensity=append_intensity)
 
     # Fit on the downsampled data (training)
-    neigh = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
-    neigh.fit(aerial_spectra.T, labels)
+    model = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
+    model.fit(data_dict["data"], data_dict["true_classes"])
 
     # Extract the full data (training and validation)
-    aerial_spectra, labels = extract_spectra(train_dataset, config, downsample=False)
+    data = extract_aerial_spectra(train_dataset, config, downsample=False)
+    data_dict = separate_labels_from_data(data)
 
     if normalize:
-        aerial_spectra = normalize_spectra(aerial_spectra, append_intensity=append_intensity)
+        data_dict = normalize_spectra(data_dict, append_intensity=append_intensity)
 
     # Predict the full data
-    predicted = neigh.predict(aerial_spectra.T)
+    predicted = model.predict(data_dict["data"])
 
     model_and_predictions = {
-        "model": neigh,
-        "true_classes": labels,
+        "model": model,
+        "true_classes": data_dict["true_classes"],
         "predicted_classes": predicted,
     }
 
