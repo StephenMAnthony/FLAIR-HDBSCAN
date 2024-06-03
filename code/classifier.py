@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import pandas
 import torchvision.transforms as transforms
 from sklearn import metrics
 from sklearn.neighbors import KNeighborsClassifier
@@ -8,7 +9,8 @@ from scipy.sparse import coo_array
 
 import utilities
 
-def normalize_spectra(spectra, append_intensity=True):
+
+def normalize_aerial_spectra(spectra, append_intensity=True):
     intensity = np.sum(spectra, axis=0)
     normalized_spectra = np.divide(spectra, intensity)
     if append_intensity:
@@ -17,7 +19,7 @@ def normalize_spectra(spectra, append_intensity=True):
     return normalized_spectra
 
 
-def extract_spectra(train_dataset, config, downsample=True, no_other=True):
+def extract_aerial_spectra(train_dataset, config, downsample=True, no_other=True):
     num_channels_aerial = config['num_channels_aerial']
     sat_aerial_ratio = config['sat_aerial_ratio']
     aerial_side = config['aerial_side']
@@ -65,7 +67,11 @@ def extract_spectra(train_dataset, config, downsample=True, no_other=True):
     labels = np.concatenate(label_list)
     labels = labels.astype(int)
 
-    return aerial_spectra, labels
+    combined = np.concatenate((labels[np.newaxis,:], aerial_spectra), axis=0)
+
+    aerial_data = pandas.DataFrame(combined.T, columns=['True_Class', 'Blue', 'Green', 'Red', 'NIR', 'Elevation'])
+
+    return aerial_data
 
 
 def train_and_validate_knn(train_dataset, config, normalize=False, append_intensity=True) -> dict:
@@ -74,7 +80,7 @@ def train_and_validate_knn(train_dataset, config, normalize=False, append_intens
     aerial_spectra, labels = extract_spectra(train_dataset, config, downsample=True)
 
     if normalize:
-        aerial_spectra = normalize_spectra(aerial_spectra, append_intensity=append_intensity)
+        aerial_spectra = normalize_aerial_spectra(aerial_spectra, append_intensity=append_intensity)
 
     # Fit on the downsampled data (training)
     neigh = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
@@ -105,7 +111,7 @@ def train_and_validate_hdbscan(train_dataset, config, normalize=False,
     aerial_spectra, actual_labels = extract_spectra(train_dataset, config, downsample=True)
 
     if normalize:
-        aerial_spectra = normalize_spectra(aerial_spectra, append_intensity=append_intensity)
+        aerial_spectra = normalize_aerial_spectra(aerial_spectra, append_intensity=append_intensity)
 
     # Perform HDBSCAN clustering
     clusterer = HDBSCAN(min_cluster_size=min_cluster_size)
@@ -147,6 +153,7 @@ def train_and_validate_hdbscan(train_dataset, config, normalize=False,
     }
 
     return model_and_predictions
+
 
 # output_dict = assign_class_to_cluster(cluster_labels, class_labels, spectra)
 
