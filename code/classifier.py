@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import pandas
 import torchvision.transforms as transforms
-from sklearn import metrics
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import HDBSCAN
 from scipy.sparse import coo_array
@@ -27,6 +26,9 @@ def separate_labels_from_data(data_and_labels: pandas.DataFrame):
     elevation = data_and_labels[['Elevation']].to_numpy().ravel()
     intensity = data_and_labels[['Aerial Intensity']].to_numpy().ravel()
     spectra = data_and_labels[spectral_column_names].to_numpy()
+
+    # Enforce integer labels
+    true_classes = true_classes.astype(int)
 
     data_dict = {
         "true_classes": true_classes,
@@ -109,7 +111,8 @@ def extract_aerial_spectra(dataset, config, downsample=True, no_other=True, scal
     return aerial_data
 
 
-def train_and_validate_model(train_dataset, config, scale_by_intensity=False, append_intensity=False) -> dict:
+def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_cluster_size=10,
+                             scale_by_intensity=False, append_intensity=False) -> dict:
 
     def normalize_and_append(input_dict: dict):
 
@@ -137,9 +140,35 @@ def train_and_validate_model(train_dataset, config, scale_by_intensity=False, ap
     data_dict = separate_labels_from_data(data)
     data_to_fit, true_classes = normalize_and_append(data_dict)
 
-    # Fit on the downsampled data (training)
+    # Set up the k-nearest neighbor model
     model = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
-    model.fit(data_to_fit, true_classes)
+
+    if use_hdbscan:
+        # Perform HDBSCAN clustering
+        clusterer = HDBSCAN(min_cluster_size=min_cluster_size)
+        hdbscan_clusters = clusterer.fit_predict(data_to_fit)
+
+        # For each cluster, assign the most common class label.
+        output_dict = assign_class_to_cluster(hdbscan_clusters, true_classes, data_to_fit)
+
+        # Display some helpful information
+        n_pixels = true_classes.size
+        n_clusters = output_dict["best_class"].size
+        n_cluster_pixels = output_dict["predicted_labels"].size
+        mean_reliability = np.mean(output_dict['reliability'])
+        weighted_mean_reliability = utilities.calc_weighted_mean(output_dict['reliability'],
+                                                                 output_dict['counts_per_cluster'])
+
+        print(f"Originally processing {n_pixels} pixels.")
+        print(f"HDBSCAN assigned {n_cluster_pixels} pixels to {n_clusters} clusters.")
+        print(f"Clusters were assigned to semantic classes with a mean reliability of {mean_reliability}, ")
+        print(f" and a weighted mean reliability of {weighted_mean_reliability}")
+
+        # Fit on the clustered samples from the training data using the predicted labels.
+        model.fit(output_dict["clustered_samples"], output_dict["predicted_labels"])
+    else:
+        # Fit on the downsampled data (training)
+        model.fit(data_to_fit, true_classes)
 
     # Extract the full data (training and validation) as a pandas dataframe,
     # applying the normalization and appending the intensity if specified
@@ -159,65 +188,14 @@ def train_and_validate_model(train_dataset, config, scale_by_intensity=False, ap
     return model_and_predictions
 
 
-def train_and_validate_hdbscan(train_dataset, config, normalize=False,
-                               append_intensity=True, min_cluster_size=10) -> dict:
-
-    # Extract the downsampled data
-    aerial_spectra, actual_labels = extract_spectra(train_dataset, config, downsample=True)
-
-    if normalize:
-        aerial_spectra = normalize_aerial_spectra(aerial_spectra, append_intensity=append_intensity)
-
-    # Perform HDBSCAN clustering
-    clusterer = HDBSCAN(min_cluster_size=min_cluster_size)
-    hdbscan_clusters = clusterer.fit_predict(aerial_spectra.T)
-
-    # For each cluster, assign the most common class label.
-    output_dict = assign_class_to_cluster(hdbscan_clusters, actual_labels, aerial_spectra)
-
-    # Display some helpful information
-    n_pixels = actual_labels.size
-    n_clusters = output_dict["best_class"].size
-    mean_reliability = np.mean(output_dict['reliability'])
-    weighted_mean_reliability = utilities.calc_weighted_mean(output_dict['reliability'],
-                                                             output_dict['counts_per_cluster'])
-    print(f"Originally processing {n_pixels} pixels.")
-    print(f"HDBSCAN found {n_clusters} clusters.")
-    print(f"Clusters were assigned to semantic classes with a mean reliability of {mean_reliability}, ")
-    print(f" and a weighted mean reliability of {weighted_mean_reliability}")
-
-    # Fit on the downsampled data (training) using the predicted labels.
-    clustered_spectra = output_dict["spectra"]
-    predicted_labels = output_dict["predicted_labels"]
-    neigh = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
-    neigh.fit(clustered_spectra.T, predicted_labels)
-
-    # Extract the full data (training and validation)
-    aerial_spectra, actual_labels = extract_spectra(train_dataset, config, downsample=False)
-
-    if normalize:
-        aerial_spectra = normalize_spectra(aerial_spectra, append_intensity=append_intensity)
-
-    # Predict the full data
-    predicted = neigh.predict(aerial_spectra.T)
-
-    model_and_predictions = {
-        "model": neigh,
-        "true_classes": actual_labels,
-        "predicted_classes": predicted,
-    }
-
-    return model_and_predictions
-
-
 # output_dict = assign_class_to_cluster(cluster_labels, class_labels, spectra)
 
-def assign_class_to_cluster(cluster_labels: np.ndarray, class_labels: np.ndarray, spectra: np.ndarray) -> dict:
+def assign_class_to_cluster(cluster_labels: np.ndarray, class_labels: np.ndarray, samples: np.ndarray) -> dict:
     # Many points will not be assigned to clusters. Exclude them.
     clustered = cluster_labels >= 0
     cluster_labels = cluster_labels[clustered]
     class_labels = class_labels[clustered]
-    spectra = spectra[:, clustered]
+    clustered_samples = samples[clustered, :]
 
     # Determine pairings of cluster labels with class labels and how many times each pairing occurs.
     cluster_class_pairs, counts = np.unique(np.column_stack((cluster_labels, class_labels)), axis=0, return_counts=True)
@@ -238,7 +216,7 @@ def assign_class_to_cluster(cluster_labels: np.ndarray, class_labels: np.ndarray
     cluster_classes = best_class[cluster_labels]
 
     output_dict = {
-        "spectra": spectra,
+        "clustered_samples": clustered_samples,
         "counts_per_cluster": counts_per_cluster,
         "reliability": reliability,
         "best_class": best_class,
