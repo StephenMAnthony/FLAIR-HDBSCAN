@@ -14,36 +14,34 @@ import utilities
 
 def separate_labels_from_data(data_and_labels: pandas.DataFrame):
 
-    # Determine all column names and from that data column names.
+    # Determine all column names and from that determine the spectral column names
     column_names = data_and_labels.columns.values.tolist()
     data_column_names = column_names.copy()
     data_column_names.remove('True_Class')
+    spectral_column_names = data_column_names.copy()
+    spectral_column_names.remove('Elevation')
+    spectral_column_names.remove('Aerial Intensity')
 
-    # Separate the data from the labels
+    # Extract the labels, the elevation, and the spectra
     true_classes = data_and_labels[['True_Class']].to_numpy().ravel()
-    data = data_and_labels[data_column_names].to_numpy()
+    elevation = data_and_labels[['Elevation']].to_numpy().ravel()
+    intensity = data_and_labels[['Aerial Intensity']].to_numpy().ravel()
+    spectra = data_and_labels[spectral_column_names].to_numpy()
 
     data_dict = {
         "true_classes": true_classes,
-        "data": data,
-        "data_column_names": data_column_names,
+        "elevation": elevation,
+        "spectra": spectra,
+        "intensity": intensity,
+        "spectral_column_names": spectral_column_names,
     }
 
     return data_dict
 
 
-def normalize_aerial_spectra(spectra, append_intensity=True):
-    intensity = np.sum(spectra, axis=0)
-    normalized_spectra = np.divide(spectra, intensity)
-    if append_intensity:
-        normalized_spectra = np.concatenate((normalized_spectra, intensity[np.newaxis, :]), axis=0)
+# aerial_data = def extract_aerial_spectra(dataset, config, downsample=True, no_other=True, scale_by_intensity=False)
 
-    return normalized_spectra
-
-
-# aerial_data = def extract_aerial_spectra(train_dataset, config, downsample=True, no_other=True)
-
-def extract_aerial_spectra(train_dataset, config, downsample=True, no_other=True):
+def extract_aerial_spectra(dataset, config, downsample=True, no_other=True, scale_by_intensity=False):
     num_channels_aerial = config['num_channels_aerial']
     sat_aerial_ratio = config['sat_aerial_ratio']
     aerial_side = config['aerial_side']
@@ -57,12 +55,12 @@ def extract_aerial_spectra(train_dataset, config, downsample=True, no_other=True
 
     aerial_list = []
     label_list = []
-    for idx in range(len(train_dataset)):
+    for idx in range(len(dataset)):
         # Load the aerial data
-        aerial = torch.Tensor.numpy(train_dataset[idx]['aerial'])
+        aerial = torch.Tensor.numpy(dataset[idx]['aerial'])
 
         # Load the labels
-        labels = torch.Tensor.numpy(train_dataset[idx]['labels'])
+        labels = torch.Tensor.numpy(dataset[idx]['labels'])
 
         if downsample:
             # Crop to only full satellite pixels
@@ -87,43 +85,74 @@ def extract_aerial_spectra(train_dataset, config, downsample=True, no_other=True
         aerial_list.append(aerial)
         label_list.append(labels)
 
+    # Extract the spectra and elevation
     aerial_spectra = np.concatenate(aerial_list, axis=1)
+    elevation = aerial_spectra[-1, :]
+    aerial_spectra = aerial_spectra[:-1, :]
+
+    # Extract the labels and recast as integers
     labels = np.concatenate(label_list)
     labels = labels.astype(int)
 
-    combined = np.concatenate((labels[np.newaxis, :], aerial_spectra), axis=0)
+    # Calculate the intensity
+    intensity = np.sum(aerial_spectra, axis=0)
 
-    aerial_data = pandas.DataFrame(combined.T, columns=['True_Class', 'Blue', 'Green', 'Red', 'NIR', 'Elevation'])
+    if scale_by_intensity:
+        aerial_spectra = np.divide(aerial_spectra, intensity[np.newaxis, :])
+
+    # Combine and record
+    combined = np.concatenate((labels[np.newaxis, :], aerial_spectra,
+                               elevation[np.newaxis, :], intensity[np.newaxis, :]), axis=0)
+    aerial_data = pandas.DataFrame(combined.T, columns=['True_Class', 'Blue', 'Green', 'Red', 'NIR',
+                                                        'Elevation', 'Aerial Intensity'])
 
     return aerial_data
 
 
-def train_and_validate_model(train_dataset, config, normalize=False, append_intensity=True) -> dict:
+def train_and_validate_model(train_dataset, config, scale_by_intensity=False, append_intensity=False) -> dict:
 
-    # Extract the downsampled data as a pandas dataframe, then separate into data and labels
+    def normalize_and_append(input_dict: dict):
+
+        # Extract
+        spectra = input_dict['spectra']
+        elevation = input_dict['elevation']
+        labels = input_dict['true_classes']
+        intensity = input_dict['intensity']
+
+        # If scaling by intensity, do so.
+        if scale_by_intensity:
+            spectra = np.divide(spectra, intensity[:, np.newaxis])
+
+        # If appending intensity, do so.
+        if append_intensity:
+            selected_data = np.concatenate((spectra, elevation[:, np.newaxis], intensity[:, np.newaxis]), axis=1)
+        else:
+            selected_data = np.concatenate((spectra, elevation[:, np.newaxis]), axis=1)
+
+        return selected_data, labels
+
+    # Extract the downsampled data as a pandas dataframe, separate into data_to_fit and labels
+    # applying the normalization and appending the intensity if specified
     data = extract_aerial_spectra(train_dataset, config)
     data_dict = separate_labels_from_data(data)
-
-    if normalize:
-        data_dict = normalize_aerial_spectra(data_dict, append_intensity=append_intensity)
+    data_to_fit, true_classes = normalize_and_append(data_dict)
 
     # Fit on the downsampled data (training)
     model = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
-    model.fit(data_dict["data"], data_dict["true_classes"])
+    model.fit(data_to_fit, true_classes)
 
-    # Extract the full data (training and validation)
+    # Extract the full data (training and validation) as a pandas dataframe,
+    # applying the normalization and appending the intensity if specified
     data = extract_aerial_spectra(train_dataset, config, downsample=False)
     data_dict = separate_labels_from_data(data)
-
-    if normalize:
-        data_dict = normalize_spectra(data_dict, append_intensity=append_intensity)
+    data_to_fit, true_classes = normalize_and_append(data_dict)
 
     # Predict the full data
-    predicted = model.predict(data_dict["data"])
+    predicted = model.predict(data_to_fit)
 
     model_and_predictions = {
         "model": model,
-        "true_classes": data_dict["true_classes"],
+        "true_classes": true_classes,
         "predicted_classes": predicted,
     }
 
