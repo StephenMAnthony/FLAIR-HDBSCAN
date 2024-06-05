@@ -4,6 +4,7 @@ import pandas
 import torchvision.transforms as transforms
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import HDBSCAN
+from sklearn.preprocessing import RobustScaler
 from scipy.sparse import coo_array
 
 import utilities
@@ -112,7 +113,7 @@ def extract_aerial_spectra(dataset, config, downsample=True, no_other=True, scal
 
 
 def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_cluster_size=10,
-                             scale_by_intensity=False, append_intensity=False) -> dict:
+                             scale_by_intensity=False, append_intensity=False, robust_scale=False) -> dict:
 
     def normalize_and_append(input_dict: dict):
 
@@ -139,6 +140,10 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
     data = extract_aerial_spectra(train_dataset, config)
     data_dict = separate_labels_from_data(data)
     data_to_fit, true_classes = normalize_and_append(data_dict)
+
+    if robust_scale:
+        transformer = RobustScaler().fit(data_to_fit)
+        data_to_fit = transformer.transform(data_to_fit)
 
     # Set up the k-nearest neighbor model
     model = KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
@@ -176,6 +181,9 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
     data_dict = separate_labels_from_data(data)
     data_to_fit, true_classes = normalize_and_append(data_dict)
 
+    if robust_scale:
+        data_to_fit = transformer.transform(data_to_fit)
+
     # Predict the full data
     predicted = model.predict(data_to_fit)
 
@@ -184,6 +192,9 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
         "true_classes": true_classes,
         "predicted_classes": predicted,
     }
+
+    if robust_scale:
+        model_and_predictions['transformer'] = transformer
 
     return model_and_predictions
 
