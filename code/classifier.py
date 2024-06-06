@@ -9,6 +9,9 @@ from scipy.sparse import coo_array
 
 import utilities
 
+AERIAL_CHANNELS = ['Blue', 'Green', 'Red', 'NIR']
+SATELLITE_CHANNELS = ['490', '560', '665', '705', '740', '783', '842', '865', '1610', '2190']
+
 
 # data_dict = separate_labels_from_data(data_and_labels)
 
@@ -18,15 +21,13 @@ def separate_labels_from_data(data_and_labels: pandas.DataFrame):
     column_names = data_and_labels.columns.values.tolist()
     data_column_names = column_names.copy()
     data_column_names.remove('True_Class')
-    spectral_column_names = data_column_names.copy()
-    spectral_column_names.remove('Elevation')
-    spectral_column_names.remove('Aerial Intensity')
 
     # Extract the labels, the elevation, and the spectra
     true_classes = data_and_labels[['True_Class']].to_numpy().ravel()
     elevation = data_and_labels[['Elevation']].to_numpy().ravel()
     intensity = data_and_labels[['Aerial Intensity']].to_numpy().ravel()
-    spectra = data_and_labels[spectral_column_names].to_numpy()
+    aerial_spectra = data_and_labels[AERIAL_CHANNELS].to_numpy()
+    satellite_spectra = data_and_labels[SATELLITE_CHANNELS].to_numpy()
 
     # Enforce integer labels
     true_classes = true_classes.astype(int)
@@ -34,18 +35,43 @@ def separate_labels_from_data(data_and_labels: pandas.DataFrame):
     data_dict = {
         "true_classes": true_classes,
         "elevation": elevation,
-        "spectra": spectra,
+        "aerial_spectra": aerial_spectra,
         "intensity": intensity,
-        "spectral_column_names": spectral_column_names,
+        "satellite_spectra": satellite_spectra,
     }
 
     return data_dict
 
 
-# aerial_data = def extract_aerial_spectra(dataset, config, downsample=True, no_other=True, scale_by_intensity=False)
+# satellite_patch = rescale_satellite(satellite, config)
 
-def extract_aerial_spectra(dataset, config, downsample=True, no_other=True, scale_by_intensity=False):
+def rescale_satellite(satellite, config):
+    sat_aerial_ratio = config['sat_aerial_ratio']
+    aerial_side = config['aerial_side']
+
+    # For the satellite images, convert to the average satellite image.
+    satellite = np.squeeze(np.mean(satellite, axis=0))
+
+    # Determine the number of satellite pixels required to completely include the aerial image
+    required_sat_size = aerial_side // sat_aerial_ratio + 2
+
+    # Perform an intermediate crop to avoid wasting space
+    transform = transforms.CenterCrop(required_sat_size)
+    satellite_patch = transform(torch.as_tensor(satellite)).numpy()
+
+    # Replicate satellite pixels to aerial resolution, then crop to the aerial dimensions
+    satellite_patch = np.repeat(np.repeat(satellite_patch, sat_aerial_ratio, axis=1), sat_aerial_ratio, axis=2)
+    transform = transforms.CenterCrop(aerial_side)
+    satellite_patch = transform(torch.as_tensor(satellite_patch)).numpy()
+
+    return satellite_patch
+
+
+# dataframe = def extract_spectra(dataset, config, downsample=True, no_other=True, scale_by_intensity=False)
+
+def extract_spectra(dataset, config, downsample=True, no_other=True, scale_by_intensity=False):
     num_channels_aerial = config['num_channels_aerial']
+    num_channels_sat = config['num_channels_sat']
     sat_aerial_ratio = config['sat_aerial_ratio']
     aerial_side = config['aerial_side']
     downsample_factor = config['downsample_factor']
@@ -54,29 +80,42 @@ def extract_aerial_spectra(dataset, config, downsample=True, no_other=True, scal
 
     # Determine the number of pixels in the aerial image for which corresponding satellite pixels are available.
     matched_aerial_pixels = aerial_side // sat_aerial_ratio * sat_aerial_ratio
-    transform_aerial = transforms.CenterCrop(matched_aerial_pixels)
+    transform_full_pixels = transforms.CenterCrop(matched_aerial_pixels)
 
     aerial_list = []
     label_list = []
-    for idx in range(len(dataset)):
-        # Load the aerial data
-        aerial = torch.Tensor.numpy(dataset[idx]['aerial'])
+    satellite_list = []
 
-        # Load the labels
+    for idx in range(len(dataset)):
+        # Load the aerial data, satellite data, and labels
+        aerial = torch.Tensor.numpy(dataset[idx]['aerial'])
         labels = torch.Tensor.numpy(dataset[idx]['labels'])
+        satellite = torch.Tensor.numpy(dataset[idx]['satellite'])
+
+        aerial = aerial.astype(np.float16)
+        satellite = satellite.astype(np.float16)
+        labels = labels.astype(np.uint8)
+
+        # Rescale the satellite image to the resolution of the aerial image, matching pixels.
+        satellite = rescale_satellite(satellite, config)
 
         if downsample:
             # Crop to only full satellite pixels
-            aerial_patch = transform_aerial(torch.as_tensor(aerial)).numpy()
-            label_patch = transform_aerial(torch.as_tensor(labels)).numpy()
+            aerial_patch = transform_full_pixels(torch.as_tensor(aerial)).numpy()
+            label_patch = transform_full_pixels(torch.as_tensor(labels)).numpy()
+            satellite_patch = transform_full_pixels(torch.as_tensor(satellite)).numpy()
 
             # Downsample to a number HDBSCAN can handle
             aerial = aerial_patch[:, downsample_factor // 2::downsample_factor,
                                   downsample_factor // 2::downsample_factor]
-            labels = label_patch[downsample_factor // 2::downsample_factor, downsample_factor // 2::downsample_factor]
+            satellite = satellite_patch[:, downsample_factor // 2::downsample_factor,
+                                        downsample_factor // 2::downsample_factor]
+            labels = label_patch[downsample_factor // 2::downsample_factor,
+                                 downsample_factor // 2::downsample_factor]
 
         # Flatten spatial dimension
         aerial = np.reshape(aerial, (num_channels_aerial, -1))
+        satellite = np.reshape(satellite, (num_channels_sat, -1))
         labels = labels.ravel()
 
         if no_other:
@@ -84,8 +123,10 @@ def extract_aerial_spectra(dataset, config, downsample=True, no_other=True, scal
             keep = labels < n_classes
             labels = labels[keep]
             aerial = aerial[:, keep]
+            satellite = satellite[:, keep]
 
         aerial_list.append(aerial)
+        satellite_list.append(satellite)
         label_list.append(labels)
 
     # Extract the spectra and elevation
@@ -93,39 +134,58 @@ def extract_aerial_spectra(dataset, config, downsample=True, no_other=True, scal
     elevation = aerial_spectra[-1, :]
     aerial_spectra = aerial_spectra[:-1, :]
 
+    # Extract the satellite spectra
+    satellite_spectra = np.concatenate(satellite_list, axis=1)
+
     # Extract the labels and recast as integers
     labels = np.concatenate(label_list)
     labels = labels.astype(int)
 
-    # Calculate the intensity
-    intensity = np.sum(aerial_spectra, axis=0)
+    # Calculate the intensity of RGB
+    intensity = np.sum(aerial_spectra[:3, :], axis=0)
+
+    # Scale the satellite intensity to match the aerial intensity
+    satellite_rgb_intensity = np.sum(satellite_spectra[:4, :], axis=0)
+    satellite_spectra = np.divide(satellite_spectra, satellite_rgb_intensity[np.newaxis, :])
 
     if scale_by_intensity:
         aerial_spectra = np.divide(aerial_spectra, intensity[np.newaxis, :])
+    else:
+        satellite_spectra = np.multiply(satellite_spectra, intensity[np.newaxis, :])
 
     # Combine and record
-    combined = np.concatenate((labels[np.newaxis, :], aerial_spectra,
+    combined = np.concatenate((labels[np.newaxis, :], aerial_spectra, satellite_spectra,
                                elevation[np.newaxis, :], intensity[np.newaxis, :]), axis=0)
-    aerial_data = pandas.DataFrame(combined.T, columns=['True_Class', 'Blue', 'Green', 'Red', 'NIR',
-                                                        'Elevation', 'Aerial Intensity'])
+    column_names = ['True_Class'] + AERIAL_CHANNELS + SATELLITE_CHANNELS + ['Elevation', 'Aerial Intensity']
+    dataframe = pandas.DataFrame(combined.T, columns=column_names)
 
-    return aerial_data
+    return dataframe
 
 
-def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_cluster_size=10,
-                             scale_by_intensity=False, append_intensity=False, robust_scale=False) -> dict:
+# data_to_fit, true_classes = load_data(train_dataset, config, downsample=True,
+#   use_satellite=False, scale_by_intensity=False, append_intensity=False)
 
+def load_data(train_dataset, config, downsample=True,
+              use_satellite=False, scale_by_intensity=False, append_intensity=False):
     def normalize_and_append(input_dict: dict):
 
         # Extract
-        spectra = input_dict['spectra']
-        elevation = input_dict['elevation']
-        labels = input_dict['true_classes']
-        intensity = input_dict['intensity']
+        aerial_spectra = input_dict['aerial_spectra'].astype(np.float16)
+        satellite_spectra = input_dict['satellite_spectra'].astype(np.float16)
+        elevation = input_dict['elevation'].astype(np.float16)
+        labels = input_dict['true_classes'].astype(np.uint8)
+        intensity = input_dict['intensity'].astype(np.float16)
 
         # If scaling by intensity, do so.
         if scale_by_intensity:
-            spectra = np.divide(spectra, intensity[:, np.newaxis])
+            aerial_spectra = np.divide(aerial_spectra, intensity[:, np.newaxis])
+            satellite_spectra = np.divide(satellite_spectra, intensity[:, np.newaxis])
+
+        # Determine whether the spectra should include the satellite channels
+        if use_satellite:
+            spectra = np.concatenate((aerial_spectra, satellite_spectra), axis=1)
+        else:
+            spectra = aerial_spectra
 
         # If appending intensity, do so.
         if append_intensity:
@@ -137,9 +197,19 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
 
     # Extract the downsampled data as a pandas dataframe, separate into data_to_fit and labels
     # applying the normalization and appending the intensity if specified
-    data = extract_aerial_spectra(train_dataset, config)
-    data_dict = separate_labels_from_data(data)
+    dataframe = extract_spectra(train_dataset, config, downsample=downsample)
+    data_dict = separate_labels_from_data(dataframe)
     data_to_fit, true_classes = normalize_and_append(data_dict)
+
+    return data_to_fit, true_classes
+
+
+def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_cluster_size=10, use_satellite=False,
+                             scale_by_intensity=False, append_intensity=False, robust_scale=False) -> dict:
+
+    # Load the data and the true classes
+    data_to_fit, true_classes = load_data(train_dataset, config, use_satellite=use_satellite,
+                                          scale_by_intensity=scale_by_intensity, append_intensity=append_intensity)
 
     if robust_scale:
         transformer = RobustScaler().fit(data_to_fit)
@@ -175,17 +245,16 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
         # Fit on the downsampled data (training)
         model.fit(data_to_fit, true_classes)
 
-    # Extract the full data (training and validation) as a pandas dataframe,
-    # applying the normalization and appending the intensity if specified
-    data = extract_aerial_spectra(train_dataset, config, downsample=False)
-    data_dict = separate_labels_from_data(data)
-    data_to_fit, true_classes = normalize_and_append(data_dict)
+    # Load the full data and the true classes
+    data_to_fit, true_classes = load_data(train_dataset, config, downsample=False, use_satellite=use_satellite,
+                                          scale_by_intensity=scale_by_intensity, append_intensity=append_intensity)
 
     if robust_scale:
         data_to_fit = transformer.transform(data_to_fit)
 
     # Predict the full data
     predicted = model.predict(data_to_fit)
+    predicted = predicted.astype(np.uint8)
 
     model_and_predictions = {
         "model": model,

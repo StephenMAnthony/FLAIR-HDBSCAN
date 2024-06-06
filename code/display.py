@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn import metrics
 
 from calc_miou import calc_miou
-from classifier import extract_aerial_spectra
+from classifier import extract_spectra
 
 LUT_COLORS = ['#db0e9a',
               '#938e7b',
@@ -98,8 +98,8 @@ def box_whisker_by_class(dataframe: pandas.DataFrame, config: dict, channel: int
 def display_normalization_scatter(dataset, config, channel1=1, channel2=2):
     plt.rcParams["figure.figsize"] = (10, 8)
 
-    original_aerial_data = extract_aerial_spectra(dataset, config, scale_by_intensity=False)
-    normalized_aerial_data = extract_aerial_spectra(dataset, config, scale_by_intensity=True)
+    original_aerial_data = extract_spectra(dataset, config, scale_by_intensity=False)
+    normalized_aerial_data = extract_spectra(dataset, config, scale_by_intensity=True)
 
     # Determine the column labels associated with the specified channels.
     channel1_column = find_channel_label(original_aerial_data, channel1)
