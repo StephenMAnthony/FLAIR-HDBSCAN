@@ -87,7 +87,7 @@ def convert_to_color(arr_2d: np.ndarray, palette: dict = lut_colors) -> np.ndarr
 
 def display_nomenclature() -> None:   
     GS = matplotlib.gridspec.GridSpec(1,2)
-    fig = plt.figure(figsize=(15,10))
+    fig = plt.figure(figsize=(12,8))
     fig.patch.set_facecolor('black')
 
     plt.figtext(0.73,0.92, "REDUCED (BASELINE) NOMENCLATURE", ha="center", va="top", fontsize=14, color="w")
@@ -144,7 +144,7 @@ def display_samples(images, masks, sentinel_imgs, centroid, palette=lut_colors) 
     ax4.add_patch(rect)
     
     ax0.set_title('RGB Image', size=12,fontweight="bold",c='w')
-    ax1.set_title('Ground Truth Mask', size=12,fontweight="bold",c='w')
+    ax1.set_title('Manually Annotated Classes', size=12,fontweight="bold",c='w')
     ax2.set_title('Overlay Image & Mask', size=12,fontweight="bold",c='w')
     ax3.set_title('Sentinel super area', size=12,fontweight="bold",c='w')
     ax4.set_title('Sentinel super patch', size=12,fontweight="bold",c='w')

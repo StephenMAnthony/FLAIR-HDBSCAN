@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-from sklearn import metrics
 
 
 def naive_clustering(the_dataset, config: dict) -> dict:

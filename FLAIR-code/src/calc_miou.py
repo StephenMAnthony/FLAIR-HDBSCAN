@@ -1,6 +1,4 @@
 import numpy as np
-from sklearn.metrics import confusion_matrix
-
 
 def calc_miou(cm_array):
     m = np.nan

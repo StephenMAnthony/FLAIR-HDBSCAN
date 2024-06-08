@@ -220,6 +220,7 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
 
     if use_hdbscan:
         # Perform HDBSCAN clustering
+        print("Performing HDBSCAN clustering")
         clusterer = HDBSCAN(min_cluster_size=min_cluster_size)
         hdbscan_clusters = clusterer.fit_predict(data_to_fit)
 
@@ -239,11 +240,15 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
         print(f"Clusters were assigned to semantic classes with a mean reliability of {mean_reliability}, ")
         print(f" and a weighted mean reliability of {weighted_mean_reliability}")
 
+        print("Building KNN Classification Model")
         # Fit on the clustered samples from the training data using the predicted labels.
         model.fit(output_dict["clustered_samples"], output_dict["predicted_labels"])
     else:
+        print("Fitting KNN classification model")
         # Fit on the downsampled data (training)
         model.fit(data_to_fit, true_classes)
+
+    print('KNN classification model fit')
 
     # Load the full data and the true classes
     data_to_fit, true_classes = load_data(train_dataset, config, downsample=False, use_satellite=use_satellite,
@@ -252,9 +257,22 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
     if robust_scale:
         data_to_fit = transformer.transform(data_to_fit)
 
-    # Predict the full data
-    predicted = model.predict(data_to_fit)
-    predicted = predicted.astype(np.uint8)
+    # Predict the full data. Experience shows that this is very computationally expensive.
+    # Additionally, there appear to sometimes be ?memory? errors on the full data.
+    # Therefore, it was redesigned to operate on chunks.
+    n_samples = data_to_fit.shape[0]
+    n_blocks = np.ceil(n_samples/1e5).astype(int)
+    print("Creating KNN predictions")
+    data_to_fit_blocks = np.array_split(data_to_fit, n_blocks, axis=0)
+    predictions = []
+    last_fit = 0
+    for data_block in data_to_fit_blocks:
+        n_in_block = data_block.shape[0]
+        print(f"Predicting pixels {last_fit + 1} to {last_fit + n_in_block} of {n_samples} total pixels.")
+        predictions.append(model.predict(data_block).astype(np.uint8))
+        last_fit += n_in_block
+
+    predicted = np.concatenate(predictions)
 
     model_and_predictions = {
         "model": model,

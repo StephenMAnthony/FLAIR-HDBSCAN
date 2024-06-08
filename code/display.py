@@ -1,5 +1,6 @@
 import numpy as np
 import pandas
+import torch
 import matplotlib.pyplot as plt
 from sklearn import metrics
 
@@ -56,7 +57,7 @@ def display_confusion(true_classes: np.ndarray, predicted_classes: np.ndarray, c
 
 
 def box_whisker_by_class(dataframe: pandas.DataFrame, config: dict, channel: int) -> str:
-    plt.rcParams["figure.figsize"] = (10, 8)
+    plt.rcParams["figure.figsize"] = (9, 7)
 
     # Determine the column label associated with the specified channel.
     channel_column = find_channel_label(dataframe, channel)
@@ -96,35 +97,70 @@ def box_whisker_by_class(dataframe: pandas.DataFrame, config: dict, channel: int
 
 
 def display_normalization_scatter(dataset, config, channel1=1, channel2=2):
-    plt.rcParams["figure.figsize"] = (10, 8)
+    plt.rcParams["figure.figsize"] = (9, 5)
 
-    original_aerial_data = extract_spectra(dataset, config, scale_by_intensity=False)
-    normalized_aerial_data = extract_spectra(dataset, config, scale_by_intensity=True)
+    original_data = extract_spectra(dataset, config, scale_by_intensity=False)
+    normalized_data = extract_spectra(dataset, config, scale_by_intensity=True)
 
     # Determine the column labels associated with the specified channels.
-    channel1_column = find_channel_label(original_aerial_data, channel1)
+    channel1_column = find_channel_label(original_data, channel1)
     if channel1_column.split(' ')[0] == "Error:":
         return channel1_column
-    channel2_column = find_channel_label(original_aerial_data, channel2)
+    channel2_column = find_channel_label(original_data, channel2)
     if channel2_column.split(' ')[0] == "Error:":
         return channel2_column
 
     plot_kwds = {'alpha': 0.1, 's': 80, 'linewidths': 0}
 
     plt.subplot(121)
-    plt.scatter(original_aerial_data[[channel1_column]].to_numpy().ravel(),
-                original_aerial_data[[channel2_column]].to_numpy().ravel(),
-                color='b', **plot_kwds)
+    plt.scatter(original_data[[channel1_column]].to_numpy().ravel(),
+                original_data[[channel2_column]].to_numpy().ravel(),
+                marker='.', color='b', **plot_kwds)
     plt.xlabel(f"{channel1_column} Channel")
     plt.ylabel(f"{channel2_column} Channel")
     plt.title("Raw Spectra")
 
     plt.subplot(122)
-    plt.scatter(normalized_aerial_data[[channel1_column]].to_numpy().ravel(),
-                normalized_aerial_data[[channel2_column]].to_numpy().ravel(),
-                color='b', **plot_kwds)
+    plt.scatter(normalized_data[[channel1_column]].to_numpy().ravel(),
+                normalized_data[[channel2_column]].to_numpy().ravel(),
+                marker='.', color='b', **plot_kwds)
     plt.xlabel(f"{channel1_column} Channel")
     plt.ylabel(f"{channel2_column} Channel")
     plt.title("Normalized Spectra")
 
     print('Plotted')
+
+
+def class_distributions(train_dataset, config):
+    plt.rcParams["figure.figsize"] = (10, 6)
+
+    # Determine all labels and the count of pixels (labels)
+    train_label_list = []
+    patch_class_count = []
+    for idx in range(len(train_dataset)):
+        this_patch = torch.Tensor.numpy(train_dataset[idx]['labels']).ravel()
+        train_label_list.append(this_patch)
+        patch_class_count.append(np.unique(this_patch).size)
+    train_labels = np.concatenate(train_label_list).astype(int)
+
+    classes, counts = np.unique(train_labels, return_counts=True)
+    total_counts = np.sum(counts)
+    percentiles = (counts * 100) / total_counts
+    percentiles = percentiles.tolist()
+    percentiles = ["{:.1f}%".format(percentile) for percentile in percentiles]
+
+    print(f"Patches had a minimum of {np.min(patch_class_count).astype(int)} and maximum of {np.max(patch_class_count).astype(int)} classes per patch with an average of {np.mean(patch_class_count):.1f}.")
+
+    bar_colors = LUT_COLORS[:12] + LUT_COLORS[-1:]
+    semantic = [text.split(' ', 1)[0] for text in list(config['weights_aerial_satellite'].keys())]
+
+    fig, ax = plt.subplots()
+    rects = ax.bar(semantic, counts, color=bar_colors)
+    ax.set_xlabel("Classes")
+    ax.set_ylabel("Pixels")
+    ax.set_title("Training Data Distribution")
+    ax.set_xticklabels(semantic, rotation=90)
+
+    ax.bar_label(rects, percentiles, padding=5, color='black', fontweight='bold')
+
+    return train_labels

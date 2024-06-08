@@ -2,7 +2,6 @@ import numpy as np
 import yaml
 
 import torch
-import torch
 from torch.nn import functional as F
 
 
