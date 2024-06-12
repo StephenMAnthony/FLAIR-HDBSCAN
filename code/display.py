@@ -88,13 +88,16 @@ def display_confusion(input_dict: dict, config: dict):
 def box_whisker_by_class(dataframe: pandas.DataFrame, config: dict, channel: int) -> str:
     plt.rcParams["figure.figsize"] = (9, 7)
 
+    n_classes = config['num_classes'] - 1
+
     # Determine the column label associated with the specified channel.
     channel_column = find_channel_label(dataframe, channel)
     if channel_column.split(' ')[0] == "Error:":
         return channel_column
 
-    # Groupby class, extracting the desired channel
+    # Group by class, extracting the desired channel
     grouped = dataframe.groupby("True_Class")[[channel_column]].apply(pandas.Series.tolist)
+
 
     # Calculate the median, standard deviation, and confidence intervals for each channel
     # class_stds = dataframe.groupby("True_Class")[[channel_column]].std()
@@ -105,12 +108,17 @@ def box_whisker_by_class(dataframe: pandas.DataFrame, config: dict, channel: int
     semantic = [text.split(' ', 1)[0] for text in list(config['weights_aerial_satellite'].keys())[:-1]]
 
     # Determine the colors.
-    colors = LUT_COLORS[:len(grouped)]
+    colors = LUT_COLORS[:n_classes]
 
     # Reverse the order to align the display with other displays
     # grouped = grouped.iloc[::-1]
     semantic.reverse()
     colors.reverse()
+
+    # Determine the classes that are present and reduce to those
+    classes_present = np.unique(dataframe.loc[:, "True_Class"].values.astype(int)).tolist()
+    semantic = [semantic[idx] for idx in classes_present]
+    colors = [colors[idx] for idx in classes_present]
 
     # Display a box-whisker plot
     fig, ax = plt.subplots()
@@ -163,6 +171,8 @@ def display_normalization_scatter(dataset, config, channel1=1, channel2=2):
 def class_distributions(train_dataset, config):
     plt.rcParams["figure.figsize"] = (10, 6)
 
+    n_classes = config['num_classes']
+
     # Determine all labels and the count of pixels (labels)
     train_label_list = []
     patch_class_count = []
@@ -172,7 +182,13 @@ def class_distributions(train_dataset, config):
         patch_class_count.append(np.unique(this_patch).size)
     train_labels = np.concatenate(train_label_list).astype(int)
 
-    classes, counts = np.unique(train_labels, return_counts=True)
+    unique_classes, unique_counts = np.unique(train_labels, return_counts=True)
+
+    # Ensure all classes are represented, assigning 0 counts to missing classes.
+    classes = np.arange(n_classes)
+    counts = np.zeros_like(classes)
+    counts[unique_classes] = unique_counts
+
     total_counts = np.sum(counts)
     percentiles = (counts * 100) / total_counts
     percentiles = percentiles.tolist()
@@ -180,14 +196,14 @@ def class_distributions(train_dataset, config):
 
     print(f"Patches had a minimum of {np.min(patch_class_count).astype(int)} and maximum of {np.max(patch_class_count).astype(int)} classes per patch with an average of {np.mean(patch_class_count):.1f}.")
 
-    bar_colors = LUT_COLORS[:12] + LUT_COLORS[-1:]
+    bar_colors = LUT_COLORS[:n_classes] + LUT_COLORS[-1:]
     semantic = [text.split(' ', 1)[0] for text in list(config['weights_aerial_satellite'].keys())]
 
     fig, ax = plt.subplots()
     rects = ax.bar(semantic, counts, color=bar_colors)
     ax.set_xlabel("Classes")
     ax.set_ylabel("Pixels")
-    ax.set_title("Training Data Distribution")
+    ax.set_title("Data Distribution")
     ax.set_xticklabels(semantic, rotation=90)
 
     ax.bar_label(rects, percentiles, padding=5, color='black', fontweight='bold')

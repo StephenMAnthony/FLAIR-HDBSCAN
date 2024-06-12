@@ -1,8 +1,9 @@
 import numpy as np
 import torch
 
+from classifier import assign_class_to_cluster
 
-def naive_clustering(the_dataset, config: dict) -> dict:
+def naive_clustering(the_dataset, config: dict, model: dict) -> dict:
     # Don't include the "other" class
     n_classes = config['num_classes'] - 1
 
