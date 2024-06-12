@@ -165,7 +165,7 @@ def extract_spectra(dataset, config, downsample=True, no_other=True, scale_by_in
 # data_to_fit, true_classes = load_data(train_dataset, config, downsample=True,
 #   use_satellite=False, scale_by_intensity=False, append_intensity=False)
 
-def load_data(train_dataset, config, downsample=True,
+def load_data(the_dataset, config, downsample=True,
               use_satellite=False, scale_by_intensity=False, append_intensity=False):
     def normalize_and_append(input_dict: dict):
 
@@ -197,7 +197,7 @@ def load_data(train_dataset, config, downsample=True,
 
     # Extract the downsampled data as a pandas dataframe, separate into data_to_fit and labels
     # applying the normalization and appending the intensity if specified
-    dataframe = extract_spectra(train_dataset, config, downsample=downsample)
+    dataframe = extract_spectra(the_dataset, config, downsample=downsample)
     data_dict = separate_labels_from_data(dataframe)
     data_to_fit, true_classes = normalize_and_append(data_dict)
 
@@ -205,7 +205,18 @@ def load_data(train_dataset, config, downsample=True,
 
 
 def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_cluster_size=10, use_satellite=False,
-                             scale_by_intensity=False, append_intensity=False, robust_scale=False) -> dict:
+                             scale_by_intensity=False, append_intensity=False, robust_scale=False,
+                             check_reliability=False, run_long=False) -> dict:
+
+    if use_satellite and scale_by_intensity and append_intensity:
+        print("*****************************Warning*****************************")
+        print("This combination of settings can take a VERY LONG TIME!")
+        print("Testing shows this combination may take 10 HOURS or more to run!")
+        print("*****************************Warning*****************************")
+        if not run_long:
+            print("This combination of settings will only run if an additional parameter, run_long=True, is added.")
+            model_and_predictions = {}
+            return model_and_predictions
 
     # Load the data and the true classes
     data_to_fit, true_classes = load_data(train_dataset, config, use_satellite=use_satellite,
@@ -225,30 +236,47 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
         hdbscan_clusters = clusterer.fit_predict(data_to_fit)
 
         # For each cluster, assign the most common class label.
-        output_dict = assign_class_to_cluster(hdbscan_clusters, true_classes, data_to_fit)
+        cluster_dict = assign_class_to_cluster(hdbscan_clusters, true_classes, data_to_fit)
 
         # Display some helpful information
         n_pixels = true_classes.size
-        n_clusters = output_dict["best_class"].size
-        n_cluster_pixels = output_dict["predicted_labels"].size
-        mean_reliability = np.mean(output_dict['reliability'])
-        weighted_mean_reliability = utilities.calc_weighted_mean(output_dict['reliability'],
-                                                                 output_dict['counts_per_cluster'])
+        n_clusters = cluster_dict["best_class"].size
+        n_cluster_pixels = cluster_dict["predicted_labels"].size
+        mean_reliability = np.mean(cluster_dict['reliability'])
+        weighted_mean_reliability = utilities.calc_weighted_mean(cluster_dict['reliability'],
+                                                                 cluster_dict['counts_per_cluster'])
 
         print(f"Originally processing {n_pixels} pixels.")
         print(f"HDBSCAN assigned {n_cluster_pixels} pixels to {n_clusters} clusters.")
         print(f"Clusters were assigned to semantic classes with a mean reliability of {mean_reliability}, ")
         print(f" and a weighted mean reliability of {weighted_mean_reliability}")
 
+        if check_reliability:
+            model.fit(cluster_dict["clustered_samples"], cluster_dict["cluster_labels"])
+            predicted_clusters_all_train = model.predict(data_to_fit)
+            reliability_dict = assign_class_to_cluster(predicted_clusters_all_train, true_classes, data_to_fit)
+            mean_reliability_all_train = np.mean(reliability_dict['reliability'])
+            weighted_mean_reliability_all_train = utilities.calc_weighted_mean(reliability_dict['reliability'],
+                                                                               reliability_dict['counts_per_cluster'])
+            print(f"If KNN is used to expand the cluster labels to all training pixels,")
+            print(f"the mean reliability is {mean_reliability_all_train},")
+            print(f"and the weighted mean reliability is {weighted_mean_reliability_all_train}")
+
         print("Building KNN Classification Model")
         # Fit on the clustered samples from the training data using the predicted labels.
-        model.fit(output_dict["clustered_samples"], output_dict["predicted_labels"])
+        model.fit(cluster_dict["clustered_samples"], cluster_dict["predicted_labels"])
     else:
         print("Fitting KNN classification model")
         # Fit on the downsampled data (training)
         model.fit(data_to_fit, true_classes)
 
     print('KNN classification model fit')
+
+    if check_reliability:
+        predicted_classes_all_train = model.predict(data_to_fit)
+        reliability_all = np.count_nonzero(predicted_classes_all_train == true_classes) / true_classes.size
+        print(f"If KNN is used to expand the autonomously generated class labels to all pixels,")
+        print(f"the reliability is {reliability_all}")
 
     # Load the full data and the true classes
     data_to_fit, true_classes = load_data(train_dataset, config, downsample=False, use_satellite=use_satellite,
@@ -278,10 +306,19 @@ def train_and_validate_model(train_dataset, config, use_hdbscan=False, min_clust
         "model": model,
         "true_classes": true_classes,
         "predicted_classes": predicted,
+        "config": config,
+        "use_hdbscan": use_hdbscan,
+        "use_satellite": use_satellite,
+        "scale_by_intensity": scale_by_intensity,
+        "append_intensity": append_intensity,
+        "robust_scale": robust_scale,
     }
 
     if robust_scale:
         model_and_predictions['transformer'] = transformer
+
+    if use_hdbscan:
+        model_and_predictions['cluster_dict'] = cluster_dict
 
     return model_and_predictions
 
@@ -318,8 +355,49 @@ def assign_class_to_cluster(cluster_labels: np.ndarray, class_labels: np.ndarray
         "counts_per_cluster": counts_per_cluster,
         "reliability": reliability,
         "best_class": best_class,
+        "cluster_labels": cluster_labels,
         "actual_labels": class_labels,
         "predicted_labels": cluster_classes,
     }
 
     return output_dict
+
+
+def apply_model(test_dataset, model_and_predictions):
+    # Unpack
+    model = model_and_predictions["model"]
+    config = model_and_predictions["config"]
+    use_satellite = model_and_predictions["use_satellite"]
+    scale_by_intensity = model_and_predictions["scale_by_intensity"]
+    append_intensity = model_and_predictions["append_intensity"]
+    robust_scale = model_and_predictions["robust_scale"]
+
+    # Load the full data and the true classes
+    data_to_fit, true_classes = load_data(test_dataset, config, downsample=False, use_satellite=use_satellite,
+                                          scale_by_intensity=scale_by_intensity, append_intensity=append_intensity)
+
+    if robust_scale:
+        transformer = model_and_predictions["transformer"]
+        data_to_fit = transformer.transform(data_to_fit)
+
+    # Predict the full test data. Experience shows that this is may be computationally expensive.
+    # Additionally, there appear to sometimes be ?memory? errors on the full data.
+    # Therefore, it was redesigned to operate on chunks.
+    n_samples = data_to_fit.shape[0]
+    n_blocks = np.ceil(n_samples/1e5).astype(int)
+    print("Creating KNN predictions")
+    data_to_fit_blocks = np.array_split(data_to_fit, n_blocks, axis=0)
+    predictions = []
+    last_fit = 0
+    for data_block in data_to_fit_blocks:
+        n_in_block = data_block.shape[0]
+        print(f"Predicting pixels {last_fit + 1} to {last_fit + n_in_block} of {n_samples} total pixels.")
+        predictions.append(model.predict(data_block).astype(np.uint8))
+        last_fit += n_in_block
+
+    predicted = np.concatenate(predictions)
+
+    model_and_predictions["predicted_classes"] = predicted
+    model_and_predictions["true_classes"] = true_classes
+
+    return model_and_predictions

@@ -25,7 +25,7 @@ def load_data (config: dict, val_percent=0.8):
         status = ['train' if test_set == False else 'test'][0] 
         ## data paths dict
         data = {'PATH_IMG':[], 'PATH_SP_DATA':[], 'SP_COORDS':[], 'PATH_SP_DATES':[],  'PATH_SP_MASKS':[], 'PATH_LABELS':[], 'MTD_AERIAL':[]} 
-        for domain in path_domains: 
+        for domain in path_domains:
             for area in os.listdir(Path(paths_data['path_aerial_'+status], domain)): 
                 aerial = sorted(list(list_items(Path(paths_data['path_aerial_'+status])/domain/Path(area), 'IMG*.tif')), key=lambda x: int(x.split('_')[-1][:-4])) 
                 sen2sp = sorted(list(list_items(Path(paths_data['path_sen_'+status])/domain/Path(area), '*data.npy'))) 
@@ -39,8 +39,7 @@ def load_data (config: dict, val_percent=0.8):
                 data['PATH_SP_DATES'] += sprods*len(aerial)
                 data['PATH_SP_MASKS'] += smasks*len(aerial) 
                 data['SP_COORDS'] += coords 
-                if test_set == False: 
-                    data['PATH_LABELS'] += sorted(list(list_items(Path(paths_data['path_labels_'+status])/domain/Path(area), 'MSK*.tif')), key=lambda x: int(x.split('_')[-1][:-4])) 
+                data['PATH_LABELS'] += sorted(list(list_items(Path(paths_data['path_labels_'+status])/domain/Path(area), 'MSK*.tif')), key=lambda x: int(x.split('_')[-1][:-4]))
         if config['aerial_metadata'] == True:
             data = adding_encoded_metadata(config['data']['path_metadata_aerial'], data) 
 

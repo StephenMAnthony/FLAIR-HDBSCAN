@@ -22,10 +22,21 @@ def naive_clustering(the_dataset, config: dict) -> dict:
     # Generate random labels with a distribution matching that of the original data
     permuted_classes = rng.permutation(all_labels)
 
-    predictions_dict = {
+    random_dict = {
         "true_classes": all_labels,
-        "random_classes": random_classes,
-        "permuted_classes": permuted_classes,
+        "predicted_classes": random_classes,
+        "label": "Classes randomly assigned based upon a uniform distribution.",
+    }
+
+    permuted_dict = {
+        "true_classes": all_labels,
+        "predicted_classes": permuted_classes,
+        "label": "Classes randomly assigned based upon the class prevalence in the dataset.",
+    }
+
+    predictions_dict = {
+        "random_dict": random_dict,
+        "permuted_dict": permuted_dict,
     }
 
     return predictions_dict

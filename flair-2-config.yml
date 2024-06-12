@@ -5,7 +5,7 @@ data:
  
     path_aerial_test: "/data/flair_2_toy_dataset/flair_2_toy_aerial_test/" # ./flair_2_aerial_test/
     path_sen_test: "/data/flair_2_toy_dataset/flair_2_toy_sen_test/" # ./flair_2_sen_test/
-    path_labels_test: ""
+    path_labels_test: "/data/flair_2_toy_dataset/flair_2_toy_labels_test/"
 
     path_sp_centroids: "/data/flair_2_toy_dataset/flair-2_centroids_sp_to_patch.json" # ./flair_2_centroids_sp_to_patch.json
     path_metadata_aerial: "/data/flair_2_toy_dataset/flair-2_aerial_metadata.json" # ./flair_aerial_metadata.json
