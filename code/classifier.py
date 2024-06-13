@@ -162,44 +162,47 @@ def extract_spectra(dataset, config, downsample=True, no_other=True, scale_by_in
     return dataframe
 
 
+def normalize_and_append(input_dict: dict, use_satellite=False, scale_by_intensity=False, append_intensity=False):
+    # Extract
+    aerial_spectra = input_dict['aerial_spectra'].astype(np.float16)
+    satellite_spectra = input_dict['satellite_spectra'].astype(np.float16)
+    elevation = input_dict['elevation'].astype(np.float16)
+    labels = input_dict['true_classes'].astype(np.uint8)
+    intensity = input_dict['intensity'].astype(np.float16)
+
+    # If scaling by intensity, do so.
+    if scale_by_intensity:
+        aerial_spectra = np.divide(aerial_spectra, intensity[:, np.newaxis])
+        satellite_spectra = np.divide(satellite_spectra, intensity[:, np.newaxis])
+
+    # Determine whether the spectra should include the satellite channels
+    if use_satellite:
+        spectra = np.concatenate((aerial_spectra, satellite_spectra), axis=1)
+    else:
+        spectra = aerial_spectra
+
+    # If appending intensity, do so.
+    if append_intensity:
+        selected_data = np.concatenate((spectra, elevation[:, np.newaxis], intensity[:, np.newaxis]), axis=1)
+    else:
+        selected_data = np.concatenate((spectra, elevation[:, np.newaxis]), axis=1)
+
+    return selected_data, labels
+
+
 # data_to_fit, true_classes = load_data(train_dataset, config, downsample=True,
 #   use_satellite=False, scale_by_intensity=False, append_intensity=False)
 
 def load_data(the_dataset, config, downsample=True,
               use_satellite=False, scale_by_intensity=False, append_intensity=False):
-    def normalize_and_append(input_dict: dict):
-
-        # Extract
-        aerial_spectra = input_dict['aerial_spectra'].astype(np.float16)
-        satellite_spectra = input_dict['satellite_spectra'].astype(np.float16)
-        elevation = input_dict['elevation'].astype(np.float16)
-        labels = input_dict['true_classes'].astype(np.uint8)
-        intensity = input_dict['intensity'].astype(np.float16)
-
-        # If scaling by intensity, do so.
-        if scale_by_intensity:
-            aerial_spectra = np.divide(aerial_spectra, intensity[:, np.newaxis])
-            satellite_spectra = np.divide(satellite_spectra, intensity[:, np.newaxis])
-
-        # Determine whether the spectra should include the satellite channels
-        if use_satellite:
-            spectra = np.concatenate((aerial_spectra, satellite_spectra), axis=1)
-        else:
-            spectra = aerial_spectra
-
-        # If appending intensity, do so.
-        if append_intensity:
-            selected_data = np.concatenate((spectra, elevation[:, np.newaxis], intensity[:, np.newaxis]), axis=1)
-        else:
-            selected_data = np.concatenate((spectra, elevation[:, np.newaxis]), axis=1)
-
-        return selected_data, labels
 
     # Extract the downsampled data as a pandas dataframe, separate into data_to_fit and labels
     # applying the normalization and appending the intensity if specified
     dataframe = extract_spectra(the_dataset, config, downsample=downsample)
     data_dict = separate_labels_from_data(dataframe)
-    data_to_fit, true_classes = normalize_and_append(data_dict)
+    data_to_fit, true_classes = normalize_and_append(data_dict, use_satellite=use_satellite,
+                                                     scale_by_intensity=scale_by_intensity,
+                                                     append_intensity=append_intensity)
 
     return data_to_fit, true_classes
 
@@ -401,3 +404,45 @@ def apply_model(test_dataset, model_and_predictions):
     model_and_predictions["true_classes"] = true_classes
 
     return model_and_predictions
+
+
+def predict_pixels(dataframe, model_and_predictions):
+    # Unpack
+    model = model_and_predictions["model"]
+    use_hdbscan = model_and_predictions["use_hdbscan"]
+    use_satellite = model_and_predictions["use_satellite"]
+    scale_by_intensity = model_and_predictions["scale_by_intensity"]
+    append_intensity = model_and_predictions["append_intensity"]
+    robust_scale = model_and_predictions["robust_scale"]
+
+    true_classes = np.asarray(dataframe.iloc[0, 0])[np.newaxis]
+    aerial = dataframe.iloc[0, 1:5].to_numpy()[np.newaxis, :]
+    satellite = dataframe.iloc[0, 5:15].to_numpy()[np.newaxis, :]
+    elevation = np.asarray(dataframe.iloc[0, 15])[np.newaxis]
+    intensity = np.asarray(dataframe.iloc[0, 16])[np.newaxis]
+
+    input_dict = {
+        'true_classes': true_classes,
+        'aerial_spectra':  aerial,
+        'satellite_spectra': satellite,
+        'elevation': elevation,
+        'intensity': intensity,
+    }
+
+    data_to_fit, true_classes = normalize_and_append(input_dict, use_satellite=use_satellite,
+                                                     scale_by_intensity=scale_by_intensity,
+                                                     append_intensity=append_intensity)
+
+    if robust_scale:
+        transformer = model_and_predictions["transformer"]
+        data_to_fit = transformer.transform(data_to_fit)
+
+    predicted = model.predict(data_to_fit).astype(np.uint8)
+
+    print(f"The pixel had a true class of {true_classes} and was predicted as class {predicted}.")
+    if use_hdbscan:
+        print("This KNN model was trained on the labels autonomously generated by HDBSCAN clustering. ")
+    else:
+        print("This KNN model was trained on the manually annotated labels. ")
+
+    return None

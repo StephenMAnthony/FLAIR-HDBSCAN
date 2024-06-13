@@ -6,6 +6,8 @@ from sklearn import metrics
 
 from calc_miou import calc_miou
 from classifier import extract_spectra
+from data_display import lut_colors
+from data_display import convert_to_color
 
 LUT_COLORS = ['#db0e9a',
               '#938e7b',
@@ -97,7 +99,6 @@ def box_whisker_by_class(dataframe: pandas.DataFrame, config: dict, channel: int
 
     # Group by class, extracting the desired channel
     grouped = dataframe.groupby("True_Class")[[channel_column]].apply(pandas.Series.tolist)
-
 
     # Calculate the median, standard deviation, and confidence intervals for each channel
     # class_stds = dataframe.groupby("True_Class")[[channel_column]].std()
@@ -245,3 +246,163 @@ def plot_timing(times, use_satellite=False):
     ax.legend(loc='upper left', ncols=2)
 
     plt.show()
+
+
+def compare_labels(the_dataset, knn, hdbscan, config, index=0):
+    n_classes = config['num_classes'] - 1
+    aerial_side = config['aerial_side']
+
+    # Load the aerial data and the labels
+    aerial = torch.Tensor.numpy(the_dataset[index]['aerial'])
+    true_labels = torch.Tensor.numpy(the_dataset[index]['labels'])
+
+    aerial = np.transpose(aerial, [1, 2, 0])
+    true_labels = true_labels + 1
+
+    n_prior_nonother_labels = 0
+    current_count = 0
+    for idx in range(index + 1):
+        # Update the count of the total number of non-other labels for prior indices
+        n_prior_nonother_labels += current_count
+
+        # Load the labels
+        labels = torch.Tensor.numpy(the_dataset[idx]['labels'])
+        labels = labels.ravel()
+        keep = labels < n_classes
+        current_count = np.count_nonzero(keep)
+
+    # Load the knn and hdbscan labels
+    knn_labels = knn['predicted_classes']
+    hdbscan_labels = hdbscan['predicted_classes']
+
+    # Reduce the predicted labels to only the relevant portion
+    knn_labels = knn_labels[n_prior_nonother_labels:(n_prior_nonother_labels + current_count)] + 1
+    hdbscan_labels = hdbscan_labels[n_prior_nonother_labels:(n_prior_nonother_labels + current_count)] + 1
+
+    # Create default label images with all pixels set to the other class.
+    knn_image = np.full((aerial_side, aerial_side), 19)
+    hdbscan_image = np.full((aerial_side, aerial_side), 19)
+
+    # Add the labels in the appropriate positions
+    knn_image.ravel()[keep] = knn_labels
+    hdbscan_image.ravel()[keep] = hdbscan_labels
+
+    # Convert to color
+    colored_true = convert_to_color(true_labels, palette=lut_colors)
+    colored_knn = convert_to_color(knn_image, palette=lut_colors)
+    colored_hdbscan = convert_to_color(hdbscan_image, palette=lut_colors)
+
+    # Now, mask off areas where the predicted and true values agree
+    knn_image[knn_image == true_labels] = 19
+    hdbscan_image[hdbscan_image == true_labels] = 19
+
+    incorrect_knn = convert_to_color(knn_image, palette=lut_colors)
+    incorrect_hdbscan = convert_to_color(hdbscan_image, palette=lut_colors)
+
+    fig, axs = plt.subplots(nrows=3, ncols=3, figsize=(10, 10))
+    fig.subplots_adjust(wspace=0.0, hspace=0.15)
+    fig.patch.set_facecolor('black')
+
+    ax0 = axs[0][0]
+    ax0.imshow(aerial[:, :, :3])
+    ax0.axis('off')
+    ax0.set_title('RGB Image', size=12, fontweight="bold", c='w')
+
+    ax1 = axs[0][1]
+    ax1.imshow(colored_true, interpolation='nearest')
+    ax1.axis('off')
+    ax1.set_title('Annotated Classes', size=12, fontweight="bold", c='w')
+
+    ax2 = axs[0][2]
+    ax2.imshow(aerial[:, :, :3])
+    ax2.imshow(colored_true, interpolation='nearest', alpha=0.25)
+    ax2.axis('off')
+    ax2.set_title('Overlay Image & Manual', size=12, fontweight="bold", c='w')
+
+    ax3 = axs[1][0]
+    ax3.imshow(incorrect_knn)
+    ax3.axis('off')
+    ax3.set_title('Incorrect KNN', size=12, fontweight="bold", c='w')
+
+    ax4 = axs[1][1]
+    ax4.imshow(colored_knn, interpolation='nearest')
+    ax4.axis('off')
+    ax4.set_title('KNN Predictions', size=12, fontweight="bold", c='w')
+
+    ax5 = axs[1][2]
+    ax5.imshow(aerial[:, :, :3])
+    ax5.imshow(colored_knn, interpolation='nearest', alpha=0.25)
+    ax5.axis('off')
+    ax5.set_title('Overlay Image & KNN', size=12, fontweight="bold", c='w')
+
+    ax6 = axs[2][0]
+    ax6.imshow(incorrect_hdbscan)
+    ax6.axis('off')
+    ax6.set_title('Incorrect HDBSCAN', size=12, fontweight="bold", c='w')
+
+    ax7 = axs[2][1]
+    ax7.imshow(colored_hdbscan, interpolation='nearest')
+    ax7.axis('off')
+    ax7.set_title('HDBSCAN Predictions', size=12, fontweight="bold", c='w')
+
+    ax8 = axs[2][2]
+    ax8.imshow(aerial[:, :, :3])
+    ax8.imshow(colored_hdbscan, interpolation='nearest', alpha=0.25)
+    ax8.axis('off')
+    ax8.set_title('Overlay Image & HDBSCAN', size=12, fontweight="bold", c='w')
+
+
+def display_pixel_spectrum(the_dataframe, config, patch_index=0, row_index=0, column_index=0):
+    aerial_side = config['aerial_side']
+
+    patch_offset = aerial_side * aerial_side * patch_index
+    column_offset = aerial_side * column_index
+    row_offset = row_index
+    total_offset = patch_offset + column_offset + row_offset
+
+    # Get the column names
+    column_names = the_dataframe.columns.tolist()
+
+    label = the_dataframe.iloc[total_offset, 0]
+    label_name = column_names[0]
+
+    aerial = the_dataframe.iloc[total_offset, 1:5]
+    aerial_names = column_names[1:5]
+
+    satellite = the_dataframe.iloc[total_offset, 5:15]
+    satellite_names = column_names[5:15]
+
+    elevation = the_dataframe.iloc[total_offset, 15]
+    elevation_name = column_names[15]
+
+    fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(9, 6))
+
+    print(
+        f"Pixel from patch {patch_index}, row {row_index}, and column {column_index} belongs to {label_name} {label} and has {elevation_name} of {elevation}.")
+
+    ax0 = axs[0]
+    ax0.plot(np.linspace(0, 3, 4), aerial)
+    ax0.set_xticks(np.arange(0, 4, 1))
+    ax0.set_xticklabels(aerial_names, rotation=0)
+    ax0.set_title('Aerial Spectra', size=12, fontweight="bold", c='k')
+    ax0.set_xlabel("Channel")
+    ax0.set_ylabel("Intensity")
+    ax0.set(xlim=(0, 3), xticks=np.arange(0, 4, 1), ylim=(0, 1), yticks=np.arange(0, 1.1, 0.1))
+
+    ax1 = axs[1]
+    ax1.plot(np.arange(0, 10, 1), satellite)
+    ax1.set_xticks(np.arange(0, 10, 1))
+    ax1.set_xticklabels(satellite_names, rotation=0)
+    ax1.set_title('Satellite Spectra', size=12, fontweight="bold", c='k')
+    ax1.set_xlabel("Band")
+    ax1.set_ylabel("Intensity")
+    ax1.set(xlim=(0, 9), ylim=(0, 1), yticks=np.arange(0, 1.1, 0.1))
+
+    return the_dataframe.iloc[total_offset:(total_offset + 1)]
+
+
+def dict_to_dataframe(input_dict):
+    # Calculate the intensity
+    input_dict['Aerial Intensity'] = [input_dict['Blue'][0] + input_dict['Green'][0] + input_dict['Red'][0]]
+    manual_df = pandas.DataFrame.from_dict(input_dict)
+    return manual_df
